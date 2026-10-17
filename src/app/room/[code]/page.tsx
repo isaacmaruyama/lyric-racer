@@ -254,7 +254,17 @@ export default function GameRoomPage() {
         } else if (event.type === "START_MATCH") {
           roomManagerRef.current?.resetAllProgressForNewStanza();
           startMatch();
-          if (html5AudioRef.current && useTypingStore.getState().previewAudioUrl) {
+          const st = useTypingStore.getState();
+          if (spotifyControllerRef.current && spotifyToken) {
+            spotifyControllerRef.current
+              .playTrack(st.spotifyUri, 0, {
+                trackName: st.trackTitle,
+                artistName: st.artistName,
+              })
+              .then((res) => {
+                if (res.ok) setActiveAudioEngine("spotify");
+              });
+          } else if (html5AudioRef.current && st.previewAudioUrl) {
             html5AudioRef.current.currentTime = 0;
             html5AudioRef.current.play().catch(() => {});
             setActiveAudioEngine("html5_preview");
@@ -358,33 +368,36 @@ export default function GameRoomPage() {
     return () => clearInterval(timer);
   }, [phase, isMuted, tickCountdown, resumeActiveAudio, players]);
 
-  // Start Match Handler (unlocks and starts Spotify or HTML5 Audio fallback!)
+  // Start Match Handler (unlocks and starts Spotify from 0:00)
   const handleStartMatch = async () => {
     roomManagerRef.current?.resetAllProgressForNewStanza();
+    pauseAllAudio();
 
     let startedSpotify = false;
-    if (spotifyDeviceReady && spotifyUri && spotifyControllerRef.current) {
-      setSpotifyStatusMsg("Starting Spotify Playback...");
-      const res = await spotifyControllerRef.current.playTrack(spotifyUri, 0);
+    if (spotifyDeviceReady && spotifyControllerRef.current) {
+      setSpotifyStatusMsg("Starting Spotify Playback from 0:00...");
+      const res = await spotifyControllerRef.current.playTrack(
+        spotifyUri,
+        0,
+        { trackName: trackTitle, artistName }
+      );
       if (res.ok) {
         startedSpotify = true;
         setActiveAudioEngine("spotify");
         setSpotifyStatusMsg("Streaming via Spotify Premium SDK");
       } else {
-        setSpotifyStatusMsg(`Spotify API (${res.error}) — Playing Preview Stream`);
+        setSpotifyStatusMsg(`Spotify Error: ${res.error}`);
       }
     }
 
-    // If Spotify didn't start, play the HTML5 audio stream so user always hears music
-    if (!startedSpotify && html5AudioRef.current && previewAudioUrl) {
+    // Only use the 30s preview stream if the user has NOT connected Spotify
+    if (!startedSpotify && !spotifyToken && html5AudioRef.current && previewAudioUrl) {
       try {
         html5AudioRef.current.volume = isMuted ? 0 : volume;
         html5AudioRef.current.currentTime = 0;
         await html5AudioRef.current.play();
         setActiveAudioEngine("html5_preview");
-        if (!spotifyToken) {
-          setSpotifyStatusMsg("Playing Track Audio Stream");
-        }
+        setSpotifyStatusMsg("Playing Preview Clip (Connect Spotify for Full Song)");
       } catch (err) {
         console.warn("Audio playback failed:", err);
       }

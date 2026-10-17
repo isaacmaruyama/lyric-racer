@@ -73,14 +73,14 @@ export class SpotifyPlaybackController {
         onError(`Browser DRM/Init Error: ${message}`)
       );
       this.player.addListener("authentication_error", ({ message }: { message: string }) =>
-        onError(`Spotify Auth Error: ${message}`)
+        onError(`Spotify Auth Expired — Reconnect Spotify: ${message}`)
       );
       this.player.addListener("account_error", ({ message }: { message: string }) =>
         onError(`Spotify Premium Required: ${message}`)
       );
-      this.player.addListener("playback_error", ({ message }: { message: string }) =>
-        onError(`Spotify Playback Error: ${message}`)
-      );
+      this.player.addListener("playback_error", ({ message }: { message: string }) => {
+        console.warn("Transient Spotify SDK playback_error:", message);
+      });
 
       this.player.connect();
     };
@@ -112,9 +112,36 @@ export class SpotifyPlaybackController {
     }
   }
 
+  /**
+   * Resolves a playable Spotify track URI in the user's market by track & artist name.
+   */
+  public async resolvePlayableTrackUri(
+    trackName: string,
+    artistName: string
+  ): Promise<string | null> {
+    if (!this.accessToken) return null;
+    try {
+      const q = encodeURIComponent(`${trackName} ${artistName}`);
+      const res = await fetch(
+        `https://api.spotify.com/v1/search?q=${q}&type=track&market=from_token&limit=3`,
+        {
+          headers: { Authorization: `Bearer ${this.accessToken}` },
+        }
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      const items: any[] = data?.tracks?.items || [];
+      const playable = items.find((item) => item.is_playable !== false) || items[0];
+      return playable?.uri || null;
+    } catch {
+      return null;
+    }
+  }
+
   public async playTrack(
     spotifyUri: string,
-    positionMs: number = 0
+    positionMs: number = 0,
+    fallbackSearch?: { trackName: string; artistName: string }
   ): Promise<{ ok: boolean; error?: string }> {
     if (!this.accessToken) {
       return { ok: false, error: "Not logged into Spotify" };
@@ -126,7 +153,23 @@ export class SpotifyPlaybackController {
     try {
       await this.unlockBrowserAudio();
 
-      const sendPlayRequest = () =>
+      // Always resolve the market-playable URI if fallbackSearch is provided
+      let targetUri = spotifyUri;
+      if (fallbackSearch?.trackName && fallbackSearch?.artistName) {
+        const marketUri = await this.resolvePlayableTrackUri(
+          fallbackSearch.trackName,
+          fallbackSearch.artistName
+        );
+        if (marketUri) {
+          targetUri = marketUri;
+        }
+      }
+
+      if (!targetUri) {
+        return { ok: false, error: "Track not found on Spotify" };
+      }
+
+      const sendPlayRequest = (uriToPlay: string) =>
         fetch(
           `https://api.spotify.com/v1/me/player/play?device_id=${this.deviceId}`,
           {
@@ -136,16 +179,16 @@ export class SpotifyPlaybackController {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              uris: [spotifyUri],
+              uris: [uriToPlay],
               position_ms: positionMs,
             }),
           }
         );
 
-      let res = await sendPlayRequest();
+      let res = await sendPlayRequest(targetUri);
 
-      // If device isn't active yet (404), transfer playback to this web player first and retry
-      if (res.status === 404) {
+      // If device went dormant or returned an error, wake/transfer device and retry
+      if (!res.ok) {
         await fetch("https://api.spotify.com/v1/me/player", {
           method: "PUT",
           headers: {
@@ -157,8 +200,8 @@ export class SpotifyPlaybackController {
             play: false,
           }),
         });
-        await new Promise((r) => setTimeout(r, 350));
-        res = await sendPlayRequest();
+        await new Promise((r) => setTimeout(r, 400));
+        res = await sendPlayRequest(targetUri);
       }
 
       if (!res.ok) {
