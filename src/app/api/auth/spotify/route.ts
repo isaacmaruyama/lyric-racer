@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveSpotifyRedirectUri } from "@/lib/spotify/redirectUri";
 
 const SPOTIFY_SCOPES = [
   "streaming",
@@ -10,13 +11,7 @@ const SPOTIFY_SCOPES = [
 
 export async function GET(request: NextRequest) {
   const clientId = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
-  const defaultOrigin = request.nextUrl.origin.replace(
-    /^http:\/\/localhost(?=:|$)/,
-    "http://127.0.0.1"
-  );
-  const redirectUri =
-    process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI ||
-    `${defaultOrigin}/api/auth/callback`;
+  const { redirectUri } = resolveSpotifyRedirectUri(request);
 
   if (!clientId || clientId === "your_spotify_client_id") {
     return NextResponse.json(

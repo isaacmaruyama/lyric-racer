@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveSpotifyRedirectUri } from "@/lib/spotify/redirectUri";
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const error = request.nextUrl.searchParams.get("error");
   const stateParam = request.nextUrl.searchParams.get("state");
 
-  const defaultOrigin = request.nextUrl.origin.replace(
-    /^http:\/\/localhost(?=:|$)/,
-    "http://127.0.0.1"
-  );
+  const { origin: defaultOrigin, redirectUri } = resolveSpotifyRedirectUri(request);
 
   let returnTo = "/";
   if (stateParam) {
@@ -32,9 +30,6 @@ export async function GET(request: NextRequest) {
 
   const clientId = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID || "";
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET || "";
-  const redirectUri =
-    process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI ||
-    `${defaultOrigin}/api/auth/callback`;
 
   try {
     const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
